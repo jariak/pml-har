@@ -1,0 +1,125 @@
+---
+title: "Practical Machine Learning - Human Activity Recognition"
+author: "jariak"
+date: "03/21/2015"
+output: html_document
+---
+
+# Background
+
+In this project, we use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the [HAR website](http://groupware.les.inf.puc-rio.br/har) (see the section on the Weight Lifting Exercise Dataset).
+
+The goal is to provide a predictive model that would, based on the accelerometer readings, correctly identify the type of lifting performed by the subjects.
+
+# Data
+
+The training data for this project are available here: 
+
+* [pml-training.csv](https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv)
+
+# Data preprocessing
+
+The dataset contains 19622 samples of 160 variables in total. However, the amount of missing data is large; 97.9% of the samples contains at least one variable with a missing value. However, the missing values are concentrated on the same few variables. There are only two types of columns; those with no missing values at all (93), and columns with 19216 missing values (67). The easiest thing to do is to drop those almost empty columns from the dataset, as they would probably contribute very little to the final model.
+
+The dataset has also columns where most of the values are an empty string (""). These were dropped as well. The cut-off criteria was the same as for the missing values, if 90% of the 
+samples had a blank value in the particular column, the corresponding variable was dropped from the dataset.
+
+Finally, there were seven variables in the dataset that were not accelerometer values, like user name and various timestamps, and they were also dropped.
+
+After these removals we have a clean dataset consisting entirely of numerical variables with no missing values. No further processing was necessary.
+
+```{r}
+# Read training data file in (from the current working directory)
+data <- read.csv("pml-training.csv")
+
+# Explore data dimensions
+dim(data)
+
+# Count number of samples with missing values
+ok <- complete.cases(data)
+sum(!ok)
+
+# Proportion of samples with missing values
+sum(!ok)/nrow(data) # 97.9%
+
+# Distribution of column-wise NA-counts
+table(sapply(data, function(x) sum(is.na(x))))
+
+# Remove mostly (>90% of all samples) empty or NA columns
+nacols <- sapply(data, function(x) sum(is.na(x))) > 0.90 * nrow(data)
+emptycols <- sapply(data, function(x) sum(x == "") > 0.90 * nrow(data))
+gdata <- data[!(nacols | emptycols)]
+
+# Check if any missing values left
+sum(!complete.cases(gdata)) # 0
+
+# Remove first 7 columns containing irrelevant data
+# ("X", "user_name", "raw_timestamp_part_1", "raw_timestamp_part_2",
+# "cvtd_timestamp", "new_window", "num_window")
+gdata <- gdata[-c(1:7)]
+```
+
+# Predictive model
+
+Random forest was chosen as the machine learning algorithm for this project. It is capable of producing highly flexible models and is quite robust to outliers and insensitive to the scaling of the predictor variables.
+
+## Partitioning the training data
+
+To evaluate the performance of the model, 30% of the training data was separated to a test set. The `caret` library and its `createDataPartition()` was used for this. It automatically keeps the distribution of the different output classes similar in each of the created partitions.
+
+
+```{r, message=FALSE}
+library(caret)
+
+# Set seed for repeatability
+set.seed(222)
+
+# Split data into training and testing sets
+inTrain <- createDataPartition(y = gdata$classe, p=0.7, list=FALSE)
+training <- gdata[inTrain, ]
+testing <- gdata[-inTrain, ]
+
+# Class counts in training set
+table(training$classe)
+
+# Class counts in test set
+table(testing$classe)
+```
+
+## Training the model
+
+The default number of 500 trees in the random forest was used. However, the optimal number of variables randomly sampled as candidates at each split was searched with 5-fold cross-validation. 5 folds was found to be an acceptable compromise between accuracy and computation time. In the final model the number of variables tried at each split was 27.
+
+```{r, message=FALSE}
+# Random forest
+rf.mod <- train(classe ~ ., data=training, method="rf",
+                trControl=trainControl(method="cv", number=5))
+rf.mod
+rf.mod$finalModel
+```
+
+## Estimating model accuracy
+
+### Training set accuracy
+
+The trained random forest was able to classify the training set samples with 100% accuracy.
+
+```{r}
+rf.pred <- predict(rf.mod)
+confusionMatrix(rf.pred, training$classe) # Acc 1 Kappa 1
+
+```
+
+### Validation set accuracy
+
+To estimate out-of-sample accuracy, the model was tested on the previously unseen samples split into the test set. The model performed extremely well, with over 99% accuracy and Kappa.
+
+```{r}
+rf.pred <- predict(rf.mod, newdata=testing)
+confusionMatrix(rf.pred, testing$classe)
+
+```
+
+# Conclusions
+
+With the described data preprocessing and random forest model training steps it is possible to identify the performed lifting type from the provided accelerometer variables with better than 99% accuracy.
